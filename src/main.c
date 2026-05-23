@@ -1,0 +1,114 @@
+#include <stdint.h>
+#include <stdlib.h>
+
+#include <zos_sys.h>
+#include <zos_video.h>
+#include <zvb_gfx.h>
+#include <zgdk.h>
+#include <core.h>
+
+#include "main.h"
+#include "assets.h"
+#include "render.h"
+#include "audio.h"
+#include "splash.h"
+#include "checkers.h"
+#include "input.h"
+
+#define SCREEN_DISABLED FLAG_OFF
+#define SCREEN_ENABLED FLAG_ON
+
+gfx_context vctx;
+uint8_t __at(G_BUF_ADDR) g_buf[SHARED_SCRATCH_BUF_SIZE];
+uint8_t g_running = FLAG_ON;
+
+static void print_error(const char* prefix, uint16_t value)
+{
+    put_s(prefix);
+    put_u8(value);
+    put_c('\n');
+}
+
+void init(void)
+{
+    zos_err_t err;
+
+    err = input_events_init();
+    if (err != ERR_SUCCESS) {
+        print_error("Input init failed: ", err);
+        exit(1);
+    }
+
+    gfx_enable_screen(SCREEN_DISABLED);
+
+    err = gfx_initialize(ZVB_CTRL_VID_MODE_GFX_640_8BIT, &vctx);
+    if (err != ERR_SUCCESS) {
+        print_error("GFX init failed: ", err);
+        exit(1);
+    }
+
+    err = load_checkers_palette(&vctx);
+    if (err != GFX_SUCCESS) {
+        print_error("Palette load failed: ", err);
+        exit(1);
+    }
+
+    err = load_checkers_tileset(&vctx);
+    if (err != GFX_SUCCESS) {
+        print_error("Tileset load failed: ", err);
+        exit(1);
+    }
+
+    err = render_init_sprites();
+    if (err != GFX_SUCCESS) {
+        print_error("Sprite init failed: ", err);
+        exit(1);
+    }
+
+    audio_init();
+    splash_run_placeholder();
+
+    render_board();
+    checkers_init_game();
+    gfx_enable_screen(SCREEN_ENABLED);
+}
+
+void deinit(void)
+{
+    audio_deinit();
+    ioctl(DEV_STDOUT, CMD_RESET_SCREEN, NULL);
+}
+
+void update(void)
+{
+    KeyEvents ev;
+
+    input_poll_events(&ev);
+    checkers_handle_input(&ev);
+
+    if (ev.quit) {
+        g_running = FLAG_OFF;
+    }
+
+    audio_tick();
+}
+
+void draw(void)
+{
+    render_draw_sprites();
+}
+
+int main(void)
+{
+    init();
+
+    while (g_running) {
+        update();
+        gfx_wait_vblank(&vctx);
+        draw();
+        gfx_wait_end_vblank(&vctx);
+    }
+
+    deinit();
+    return 0;
+}

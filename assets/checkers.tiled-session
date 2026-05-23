@@ -1,0 +1,26 @@
+{
+    "activeFile": "checkers.tmx",
+    "expandedProjectPaths": [
+    ],
+    "file.lastUsedOpenFilter": "All Files (*)",
+    "fileStates": {
+        "checkers.tmx": {
+            "scale": 2.4546,
+            "selectedLayer": 1,
+            "viewCenter": {
+                "x": 101.23849099649638,
+                "y": 393.954208424998
+            }
+        },
+        "checkers.tsx": {
+            "scaleInDock": 2.1084
+        }
+    },
+    "openFiles": [
+        "checkers.tmx"
+    ],
+    "project": "checkers.tiled-project",
+    "recentFiles": [
+        "checkers.tmx"
+    ]
+}
