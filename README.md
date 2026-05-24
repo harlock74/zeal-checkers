@@ -33,6 +33,8 @@ If using the native-emulator and not real hardware, click on the mouse middle bu
 - License: CC-BY 4.0
 - Source: https://hanahoa.itch.io/chess-and-checkers
 
+## Attribution
+
 - Author: Zingot Games  
 - License: CC-BY 4.0  
 - Source: https://opengameart.org/content/bitmap-font-pack  
