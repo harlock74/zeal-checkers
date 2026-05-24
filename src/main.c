@@ -17,16 +17,29 @@
 
 #define SCREEN_DISABLED FLAG_OFF
 #define SCREEN_ENABLED FLAG_ON
+#define APP_STATE_SPLASH 0
+#define APP_STATE_GAME 1
 
 gfx_context vctx;
 uint8_t __at(G_BUF_ADDR) g_buf[SHARED_SCRATCH_BUF_SIZE];
 uint8_t g_running = FLAG_ON;
+static uint8_t app_state;
 
 static void print_error(const char* prefix, uint16_t value)
 {
     put_s(prefix);
     put_u8(value);
     put_c('\n');
+}
+
+static void load_ui_font_tiles(void)
+{
+    ascii_map(' ', 1, EMPTY_TILE);
+    ascii_map('A', 26, FONT_ALPHA_A_TILE);
+    ascii_map('a', 26, FONT_ALPHA_A_TILE);
+    ascii_map('0', 10, FONT_DIGIT_0_TILE);
+    ascii_map(':', 1, FONT_COLON_TILE);
+    ascii_map('!', 1, FONT_EXCL_TILE);
 }
 
 void init(void)
@@ -58,6 +71,7 @@ void init(void)
         print_error("Tileset load failed: ", err);
         exit(1);
     }
+    load_ui_font_tiles();
 
     err = render_init_sprites();
     if (err != GFX_SUCCESS) {
@@ -66,10 +80,9 @@ void init(void)
     }
 
     audio_init();
-    splash_run_placeholder();
 
-    render_board();
-    checkers_init_game();
+    app_state = APP_STATE_SPLASH;
+    splash_show();
     gfx_enable_screen(SCREEN_ENABLED);
 }
 
@@ -84,7 +97,18 @@ void update(void)
     KeyEvents ev;
 
     input_poll_events(&ev);
-    checkers_handle_input(&ev);
+    if (app_state == APP_STATE_SPLASH) {
+        uint8_t difficulty = splash_select_difficulty(&ev);
+
+        if (difficulty != U8_MAX_VALUE) {
+            checkers_set_ai_difficulty(difficulty);
+            render_board();
+            checkers_init_game();
+            app_state = APP_STATE_GAME;
+        }
+    } else {
+        checkers_handle_input(&ev);
+    }
 
     if (ev.quit) {
         g_running = FLAG_OFF;

@@ -4,12 +4,23 @@
     ],
     "file.lastUsedOpenFilter": "All Files (*)",
     "fileStates": {
+        "/Users/alberto/Desktop/Codex project/Zeal-8/zeal-videopoker/assets/cards.tmx": {
+            "scale": 0.2790625,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 838.521836506159,
+                "y": 213.21388577827554
+            }
+        },
+        "/Users/alberto/Desktop/Codex project/Zeal-8/zeal-videopoker/assets/cards.tsx": {
+            "scaleInDock": 1
+        },
         "checkers.tmx": {
-            "scale": 2.4546,
+            "scale": 2,
             "selectedLayer": 1,
             "viewCenter": {
-                "x": 101.23849099649638,
-                "y": 393.954208424998
+                "x": 768.5,
+                "y": 371.75
             }
         },
         "checkers.tsx": {
@@ -21,6 +32,7 @@
     ],
     "project": "checkers.tiled-project",
     "recentFiles": [
-        "checkers.tmx"
+        "checkers.tmx",
+        "/Users/alberto/Desktop/Codex project/Zeal-8/zeal-videopoker/assets/cards.tmx"
     ]
 }

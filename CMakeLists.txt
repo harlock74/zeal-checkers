@@ -50,6 +50,7 @@ gif2zeal(${target_name} FILES
 
 tiled2zeal(${target_name} FILES
     "assets/checkers.tmx"
+    SIZE 40x30
 )
 
 copy_assets(${target_name} FILES

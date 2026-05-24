@@ -6,8 +6,12 @@
 #include "main.h"
 #include "assets.h"
 
-extern uint8_t _ztm_checkers_start;
-extern uint8_t _ztm_checkers_end;
+extern uint8_t _ztm_checkers_board_start;
+extern uint8_t _ztm_checkers_board_end;
+extern uint8_t _ztm_checkers_splash_bg_start;
+extern uint8_t _ztm_checkers_splash_bg_end;
+extern uint8_t _ztm_checkers_splash_text_start;
+extern uint8_t _ztm_checkers_splash_text_end;
 
 #define CHECKERS_TILESET_VRAM_SCALE 2
 
@@ -102,7 +106,29 @@ gfx_error load_checkers_tileset(gfx_context* ctx)
 
 uint8_t assets_get_layout_tile(uint8_t x, uint8_t y)
 {
-    const uint8_t* map = (const uint8_t*)&_ztm_checkers_start;
+    const uint8_t* map = (const uint8_t*)&_ztm_checkers_board_start;
+
+    if (x >= SCREEN_TILE_W || y >= SCREEN_TILE_H) {
+        return EMPTY_TILE;
+    }
+
+    return map[((uint16_t)y * SCREEN_TILE_W) + x];
+}
+
+uint8_t assets_get_splash_bg_tile(uint8_t x, uint8_t y)
+{
+    const uint8_t* map = (const uint8_t*)&_ztm_checkers_splash_bg_start;
+
+    if (x >= SCREEN_TILE_W || y >= SCREEN_TILE_H) {
+        return EMPTY_TILE;
+    }
+
+    return map[((uint16_t)y * SCREEN_TILE_W) + x];
+}
+
+uint8_t assets_get_splash_text_tile(uint8_t x, uint8_t y)
+{
+    const uint8_t* map = (const uint8_t*)&_ztm_checkers_splash_text_start;
 
     if (x >= SCREEN_TILE_W || y >= SCREEN_TILE_H) {
         return EMPTY_TILE;
@@ -114,8 +140,14 @@ uint8_t assets_get_layout_tile(uint8_t x, uint8_t y)
 void __assets__(void) __naked
 {
     __asm__(
-        "__ztm_checkers_start:\n"
-        "    .incbin \"assets/checkers.ztm\"\n"
-        "__ztm_checkers_end:\n"
+        "__ztm_checkers_board_start:\n"
+        "    .incbin \"assets/checkers0000.ztm\"\n"
+        "__ztm_checkers_board_end:\n"
+        "__ztm_checkers_splash_bg_start:\n"
+        "    .incbin \"assets/checkers0001.ztm\"\n"
+        "__ztm_checkers_splash_bg_end:\n"
+        "__ztm_checkers_splash_text_start:\n"
+        "    .incbin \"assets/checkers0003.ztm\"\n"
+        "__ztm_checkers_splash_text_end:\n"
     );
 }

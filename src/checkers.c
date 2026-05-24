@@ -31,6 +31,9 @@
 #define MOVE_CAPTURE 2
 #define TURN_PLAYER FLAG_ON
 #define TURN_COMPUTER FLAG_OFF
+#define GAME_PLAYING 0
+#define GAME_PLAYER_WIN 1
+#define GAME_COMPUTER_WIN 2
 #define TILE_CENTER_OFFSET 8
 #define SCORE_NONE 0
 #define SCORE_SIMPLE 10
@@ -39,6 +42,13 @@
 #define SCORE_KING 5
 #define SCORE_SAFE 8
 #define SCORE_RISK_PENALTY 12
+#define SCORE_CHAIN_CAPTURE 35
+#define AI_CHAIN_DEPTH_MAX 6
+#define BOARD_PIXEL_X (CHECKERS_BOARD_TILE_X * TILE_PIXELS)
+#define BOARD_PIXEL_Y (CHECKERS_BOARD_TILE_Y * TILE_PIXELS)
+#define BOARD_PIXEL_MAX_X ((CHECKERS_BOARD_TILE_X + CHECKERS_BOARD_TILE_W) * TILE_PIXELS - 1U)
+#define BOARD_PIXEL_MAX_Y ((CHECKERS_BOARD_TILE_Y + CHECKERS_BOARD_TILE_H) * TILE_PIXELS - 1U)
+#define DRAG_PIECE_HOTSPOT_OFFSET (TILE_PIXELS + TILE_CENTER_OFFSET)
 
 typedef struct {
     uint8_t from_x;
@@ -56,9 +66,21 @@ static uint8_t selector_y;
 static uint8_t selected_x;
 static uint8_t selected_y;
 static uint8_t current_turn;
+static uint8_t game_state;
+static uint8_t ai_difficulty = CHECKERS_AI_DEFAULT_DIFFICULTY;
 static uint16_t cursor_hotspot_x;
 static uint16_t cursor_hotspot_y;
 static uint8_t board[CHECKERS_BOARD_SQUARES][CHECKERS_BOARD_SQUARES];
+
+static void draw_banner_message(const char* message)
+{
+    render_draw_banner_text(message);
+}
+
+static void clear_banner_message(void)
+{
+    render_clear_banner();
+}
 
 static uint8_t square_is_computer_start(uint8_t board_x, uint8_t board_y)
 {
@@ -130,22 +152,93 @@ static uint8_t selector_tile_for_state(void)
     return has_selection() ? CLOSED_HAND_SELECTOR_TILE : OPEN_HAND_SELECTOR_TILE;
 }
 
+static uint8_t piece_player_flag(uint8_t piece)
+{
+    return piece_is_player(piece) ? PIECE_IS_PLAYER : PIECE_IS_COMPUTER;
+}
+
+static uint8_t piece_king_flag(uint8_t piece)
+{
+    return piece_is_king(piece) ? PIECE_IS_KING : PIECE_IS_MAN;
+}
+
+static uint16_t drag_piece_pixel_x(void)
+{
+    return (uint16_t)(cursor_hotspot_x - DRAG_PIECE_HOTSPOT_OFFSET);
+}
+
+static uint16_t drag_piece_pixel_y(void)
+{
+    return (uint16_t)(cursor_hotspot_y - DRAG_PIECE_HOTSPOT_OFFSET);
+}
+
+static void update_drag_piece(void)
+{
+    if (has_selection()) {
+        render_move_drag_piece(drag_piece_pixel_x(), drag_piece_pixel_y());
+    }
+}
+
 static void update_selector(void)
 {
     render_set_selector_pixel(cursor_hotspot_x, cursor_hotspot_y, selector_tile_for_state(), FLAG_ON);
+    update_drag_piece();
+}
+
+static void restore_selected_piece_visual(void)
+{
+    if (has_selection() && board[selected_y][selected_x] != PIECE_EMPTY) {
+        uint8_t piece = board[selected_y][selected_x];
+
+        render_set_piece(0, selected_x, selected_y, piece_player_flag(piece), piece_king_flag(piece));
+    }
+    render_clear_drag_piece();
+}
+
+static void show_selected_piece_as_drag(void)
+{
+    uint8_t piece = board[selected_y][selected_x];
+
+    if (piece == PIECE_EMPTY) {
+        return;
+    }
+
+    render_clear_piece_square(selected_x, selected_y);
+    render_set_drag_piece(
+        drag_piece_pixel_x(),
+        drag_piece_pixel_y(),
+        piece_player_flag(piece),
+        piece_king_flag(piece));
 }
 
 static void select_current_piece(void)
 {
+    restore_selected_piece_visual();
     selected_x = selector_x;
     selected_y = selector_y;
+    show_selected_piece_as_drag();
     update_selector();
 }
 
 static void clear_selection_and_update_selector(void)
 {
+    restore_selected_piece_visual();
     clear_selection();
     update_selector();
+}
+
+static void set_game_state(uint8_t state)
+{
+    game_state = state;
+    clear_selection();
+    render_clear_drag_piece();
+    render_set_selector_pixel(cursor_hotspot_x, cursor_hotspot_y, selector_tile_for_state(), FLAG_OFF);
+
+    if (state == GAME_PLAYER_WIN) {
+        draw_banner_message("YOU WIN PRESS ENTER TO PLAY AGAIN!");
+    } else if (state == GAME_COMPUTER_WIN) {
+        draw_banner_message("YOU LOSE PRESS ENTER TO PLAY AGAIN!");
+    }
 }
 
 static uint8_t abs_diff_u8(uint8_t a, uint8_t b)
@@ -173,10 +266,10 @@ static uint16_t tile_center_pixel(uint8_t tile)
     return (uint16_t)(((uint16_t)tile * TILE_PIXELS) + TILE_CENTER_OFFSET);
 }
 
-static uint16_t clamp_cursor_pixel(int16_t value, uint16_t max_value)
+static uint16_t clamp_cursor_pixel(int16_t value, uint16_t min_value, uint16_t max_value)
 {
-    if (value < 0) {
-        return 0;
+    if (value < (int16_t)min_value) {
+        return min_value;
     }
     if ((uint16_t)value > max_value) {
         return max_value;
@@ -184,9 +277,15 @@ static uint16_t clamp_cursor_pixel(int16_t value, uint16_t max_value)
     return (uint16_t)value;
 }
 
-static uint8_t board_coord_from_cursor_pixel(uint16_t pixel)
+static uint8_t board_coord_from_cursor_pixel(uint16_t pixel, uint16_t board_pixel_origin)
 {
-    uint8_t coord = (uint8_t)(pixel / (CHECKERS_SQUARE_TILE_W * TILE_PIXELS));
+    uint8_t coord;
+
+    if (pixel < board_pixel_origin) {
+        return 0;
+    }
+
+    coord = (uint8_t)((pixel - board_pixel_origin) / (CHECKERS_SQUARE_TILE_W * TILE_PIXELS));
 
     if (coord >= CHECKERS_BOARD_SQUARES) {
         return (uint8_t)(CHECKERS_BOARD_SQUARES - 1U);
@@ -196,9 +295,12 @@ static uint8_t board_coord_from_cursor_pixel(uint16_t pixel)
 
 static void sync_cursor_to_selector(void)
 {
-    cursor_hotspot_x = tile_center_pixel((uint8_t)((selector_x * CHECKERS_SQUARE_TILE_W) + 1U));
-    cursor_hotspot_y = tile_center_pixel((uint8_t)((selector_y * CHECKERS_SQUARE_TILE_H) + 1U));
+    cursor_hotspot_x = tile_center_pixel(
+        (uint8_t)(CHECKERS_BOARD_TILE_X + (selector_x * CHECKERS_SQUARE_TILE_W) + 1U));
+    cursor_hotspot_y = tile_center_pixel(
+        (uint8_t)(CHECKERS_BOARD_TILE_Y + (selector_y * CHECKERS_SQUARE_TILE_H) + 1U));
     render_set_selector_pixel(cursor_hotspot_x, cursor_hotspot_y, selector_tile_for_state(), FLAG_ON);
+    update_drag_piece();
 }
 
 static uint8_t apply_mouse_motion(const KeyEvents* ev)
@@ -214,14 +316,17 @@ static uint8_t apply_mouse_motion(const KeyEvents* ev)
     old_y = selector_y;
     cursor_hotspot_x = clamp_cursor_pixel(
         (int16_t)cursor_hotspot_x + ev->mouse_dx,
-        (uint16_t)(SCREEN_PIXEL_W - 1U));
+        BOARD_PIXEL_X,
+        BOARD_PIXEL_MAX_X);
     cursor_hotspot_y = clamp_cursor_pixel(
         (int16_t)cursor_hotspot_y + (ev->mouse_dy * MOUSE_Y_DIRECTION),
-        (uint16_t)(SCREEN_PIXEL_H - 1U));
+        BOARD_PIXEL_Y,
+        BOARD_PIXEL_MAX_Y);
 
-    selector_x = board_coord_from_cursor_pixel(cursor_hotspot_x);
-    selector_y = board_coord_from_cursor_pixel(cursor_hotspot_y);
+    selector_x = board_coord_from_cursor_pixel(cursor_hotspot_x, BOARD_PIXEL_X);
+    selector_y = board_coord_from_cursor_pixel(cursor_hotspot_y, BOARD_PIXEL_Y);
     render_set_selector_pixel(cursor_hotspot_x, cursor_hotspot_y, selector_tile_for_state(), FLAG_ON);
+    update_drag_piece();
 
     return (old_x != selector_x || old_y != selector_y) ? FLAG_ON : FLAG_OFF;
 }
@@ -250,6 +355,129 @@ static uint8_t move_type_for_piece(uint8_t from_x, uint8_t from_y, uint8_t to_x,
     }
 
     return MOVE_NONE;
+}
+
+static uint8_t side_has_piece(uint8_t turn)
+{
+    for (uint8_t y = 0; y < CHECKERS_BOARD_SQUARES; y++) {
+        for (uint8_t x = 0; x < CHECKERS_BOARD_SQUARES; x++) {
+            if (piece_matches_turn(board[y][x], turn)) {
+                return FLAG_ON;
+            }
+        }
+    }
+
+    return FLAG_OFF;
+}
+
+static uint8_t side_has_move_type(uint8_t turn, uint8_t required_move_type)
+{
+    for (uint8_t y = 0; y < CHECKERS_BOARD_SQUARES; y++) {
+        for (uint8_t x = 0; x < CHECKERS_BOARD_SQUARES; x++) {
+            uint8_t piece = board[y][x];
+
+            if (piece_matches_turn(piece, turn)) {
+                for (uint8_t distance = MOVE_DISTANCE_ONE; distance <= MOVE_DISTANCE_CAPTURE; distance++) {
+                    for (int8_t dy = -1; dy <= 1; dy += 2) {
+                        int8_t to_y = (int8_t)(y + (dy * distance));
+
+                        if (coord_on_board(to_y)) {
+                            for (int8_t dx = -1; dx <= 1; dx += 2) {
+                                int8_t to_x = (int8_t)(x + (dx * distance));
+
+                                if (coord_on_board(to_x)) {
+                                    uint8_t move_type = move_type_for_piece(
+                                        x,
+                                        y,
+                                        (uint8_t)to_x,
+                                        (uint8_t)to_y,
+                                        piece);
+
+                                    if (move_type != MOVE_NONE &&
+                                        (required_move_type == MOVE_NONE || move_type == required_move_type)) {
+                                        return FLAG_ON;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return FLAG_OFF;
+}
+
+static uint8_t piece_has_move_type(uint8_t from_x, uint8_t from_y, uint8_t required_move_type)
+{
+    uint8_t piece = board[from_y][from_x];
+
+    if (piece == PIECE_EMPTY) {
+        return FLAG_OFF;
+    }
+
+    for (uint8_t distance = MOVE_DISTANCE_ONE; distance <= MOVE_DISTANCE_CAPTURE; distance++) {
+        for (int8_t dy = -1; dy <= 1; dy += 2) {
+            int8_t to_y = (int8_t)(from_y + (dy * distance));
+
+            if (coord_on_board(to_y)) {
+                for (int8_t dx = -1; dx <= 1; dx += 2) {
+                    int8_t to_x = (int8_t)(from_x + (dx * distance));
+
+                    if (coord_on_board(to_x)) {
+                        uint8_t move_type = move_type_for_piece(
+                            from_x,
+                            from_y,
+                            (uint8_t)to_x,
+                            (uint8_t)to_y,
+                            piece);
+
+                        if (move_type != MOVE_NONE &&
+                            (required_move_type == MOVE_NONE || move_type == required_move_type)) {
+                            return FLAG_ON;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return FLAG_OFF;
+}
+
+static uint8_t side_has_legal_move(uint8_t turn)
+{
+    return side_has_move_type(turn, MOVE_NONE);
+}
+
+static uint8_t side_has_capture(uint8_t turn)
+{
+    return side_has_move_type(turn, MOVE_CAPTURE);
+}
+
+static uint8_t piece_has_capture(uint8_t from_x, uint8_t from_y)
+{
+    return piece_has_move_type(from_x, from_y, MOVE_CAPTURE);
+}
+
+static uint8_t side_has_lost(uint8_t turn)
+{
+    return (!side_has_piece(turn) || !side_has_legal_move(turn)) ? FLAG_ON : FLAG_OFF;
+}
+
+static uint8_t update_game_over(void)
+{
+    if (side_has_lost(TURN_COMPUTER)) {
+        set_game_state(GAME_PLAYER_WIN);
+        return FLAG_ON;
+    }
+    if (side_has_lost(TURN_PLAYER)) {
+        set_game_state(GAME_COMPUTER_WIN);
+        return FLAG_ON;
+    }
+
+    return FLAG_OFF;
 }
 
 static void apply_move(uint8_t from_x, uint8_t from_y, uint8_t to_x, uint8_t to_y, uint8_t piece, uint8_t move_type)
@@ -382,6 +610,109 @@ static uint8_t score_computer_move(
     return score;
 }
 
+static uint8_t piece_after_move(uint8_t piece, uint8_t to_y)
+{
+    if (piece == PIECE_PLAYER_MAN && to_y == PLAYER_PROMOTION_ROW) {
+        return PIECE_PLAYER_KING;
+    }
+    if (piece == PIECE_COMPUTER_MAN && to_y == COMPUTER_PROMOTION_ROW) {
+        return PIECE_COMPUTER_KING;
+    }
+    return piece;
+}
+
+static uint8_t score_computer_capture_chain(uint8_t from_x, uint8_t from_y, uint8_t piece, uint8_t depth)
+{
+    uint8_t best_score = SCORE_NONE;
+
+    if (depth >= AI_CHAIN_DEPTH_MAX) {
+        return SCORE_NONE;
+    }
+
+    for (int8_t dy = -1; dy <= 1; dy += 2) {
+        int8_t to_y = (int8_t)(from_y + (dy * MOVE_DISTANCE_CAPTURE));
+
+        if (coord_on_board(to_y)) {
+            for (int8_t dx = -1; dx <= 1; dx += 2) {
+                int8_t to_x = (int8_t)(from_x + (dx * MOVE_DISTANCE_CAPTURE));
+
+                if (coord_on_board(to_x)) {
+                    uint8_t move_type = move_type_for_piece(
+                        from_x,
+                        from_y,
+                        (uint8_t)to_x,
+                        (uint8_t)to_y,
+                        piece);
+
+                    if (move_type == MOVE_CAPTURE) {
+                        uint8_t middle_x = (uint8_t)((from_x + (uint8_t)to_x) / 2U);
+                        uint8_t middle_y = (uint8_t)((from_y + (uint8_t)to_y) / 2U);
+                        uint8_t captured_piece = board[middle_y][middle_x];
+                        uint8_t moved_piece = piece_after_move(piece, (uint8_t)to_y);
+                        uint8_t score = SCORE_CHAIN_CAPTURE;
+                        uint8_t promotes = piece_promotes_at(piece, (uint8_t)to_y);
+
+                        board[from_y][from_x] = PIECE_EMPTY;
+                        board[middle_y][middle_x] = PIECE_EMPTY;
+                        board[(uint8_t)to_y][(uint8_t)to_x] = moved_piece;
+
+                        if (!promotes) {
+                            score = (uint8_t)(score + score_computer_capture_chain(
+                                (uint8_t)to_x,
+                                (uint8_t)to_y,
+                                moved_piece,
+                                (uint8_t)(depth + 1U)));
+                        }
+
+                        board[(uint8_t)to_y][(uint8_t)to_x] = PIECE_EMPTY;
+                        board[middle_y][middle_x] = captured_piece;
+                        board[from_y][from_x] = piece;
+
+                        if (score > best_score) {
+                            best_score = score;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return best_score;
+}
+
+static uint8_t score_computer_move_with_chain(
+    uint8_t from_x,
+    uint8_t from_y,
+    uint8_t to_x,
+    uint8_t to_y,
+    uint8_t piece,
+    uint8_t move_type)
+{
+    uint8_t score = score_computer_move(from_x, from_y, to_x, to_y, piece, move_type);
+
+    if (move_type == MOVE_CAPTURE) {
+        uint8_t middle_x = (uint8_t)((from_x + to_x) / 2U);
+        uint8_t middle_y = (uint8_t)((from_y + to_y) / 2U);
+        uint8_t captured_piece = board[middle_y][middle_x];
+        uint8_t moved_piece = piece_after_move(piece, to_y);
+        uint8_t promotes = piece_promotes_at(piece, to_y);
+
+        board[from_y][from_x] = PIECE_EMPTY;
+        board[middle_y][middle_x] = PIECE_EMPTY;
+        board[to_y][to_x] = moved_piece;
+
+        if (!promotes) {
+            score = (uint8_t)(score + score_computer_capture_chain(to_x, to_y, moved_piece, 1));
+        }
+
+        board[to_y][to_x] = PIECE_EMPTY;
+        board[middle_y][middle_x] = captured_piece;
+        board[from_y][from_x] = piece;
+    }
+
+    return score;
+}
+
 static void remember_candidate(
     CandidateMove* best,
     uint8_t from_x,
@@ -391,7 +722,7 @@ static void remember_candidate(
     uint8_t piece,
     uint8_t move_type)
 {
-    uint8_t score = score_computer_move(from_x, from_y, to_x, to_y, piece, move_type);
+    uint8_t score = score_computer_move_with_chain(from_x, from_y, to_x, to_y, piece, move_type);
 
     if (best->move_type == MOVE_NONE || score > best->score) {
         best->from_x = from_x;
@@ -404,28 +735,57 @@ static void remember_candidate(
     }
 }
 
-static uint8_t first_computer_move_for_distance(uint8_t distance)
+static void store_candidate(
+    CandidateMove* candidate,
+    uint8_t from_x,
+    uint8_t from_y,
+    uint8_t to_x,
+    uint8_t to_y,
+    uint8_t piece,
+    uint8_t move_type)
 {
-    for (uint8_t y = 0; y < CHECKERS_BOARD_SQUARES; y++) {
-        for (uint8_t x = 0; x < CHECKERS_BOARD_SQUARES; x++) {
-            uint8_t piece = board[y][x];
+    candidate->from_x = from_x;
+    candidate->from_y = from_y;
+    candidate->to_x = to_x;
+    candidate->to_y = to_y;
+    candidate->piece = piece;
+    candidate->move_type = move_type;
+    candidate->score = SCORE_NONE;
+}
 
-            if (piece_matches_turn(piece, TURN_COMPUTER)) {
-                for (int8_t dy = -1; dy <= 1; dy += 2) {
-                    int8_t to_y = (int8_t)(y + (dy * distance));
+static void apply_candidate_move(const CandidateMove* candidate)
+{
+    apply_move(
+        candidate->from_x,
+        candidate->from_y,
+        candidate->to_x,
+        candidate->to_y,
+        candidate->piece,
+        candidate->move_type);
+}
 
-                    if (coord_on_board(to_y)) {
-                        for (int8_t dx = -1; dx <= 1; dx += 2) {
-                            int8_t to_x = (int8_t)(x + (dx * distance));
+static uint8_t first_piece_move_for_distance(CandidateMove* candidate, uint8_t from_x, uint8_t from_y, uint8_t distance)
+{
+    uint8_t piece = board[from_y][from_x];
 
-                            if (coord_on_board(to_x)) {
-                                uint8_t move_type = move_type_for_piece(x, y, (uint8_t)to_x, (uint8_t)to_y, piece);
-                                if (move_type != MOVE_NONE) {
-                                    apply_move(x, y, (uint8_t)to_x, (uint8_t)to_y, piece, move_type);
-                                    return FLAG_ON;
-                                }
-                            }
-                        }
+    for (int8_t dy = -1; dy <= 1; dy += 2) {
+        int8_t to_y = (int8_t)(from_y + (dy * distance));
+
+        if (coord_on_board(to_y)) {
+            for (int8_t dx = -1; dx <= 1; dx += 2) {
+                int8_t to_x = (int8_t)(from_x + (dx * distance));
+
+                if (coord_on_board(to_x)) {
+                    uint8_t move_type = move_type_for_piece(
+                        from_x,
+                        from_y,
+                        (uint8_t)to_x,
+                        (uint8_t)to_y,
+                        piece);
+
+                    if (move_type != MOVE_NONE) {
+                        store_candidate(candidate, from_x, from_y, (uint8_t)to_x, (uint8_t)to_y, piece, move_type);
+                        return FLAG_ON;
                     }
                 }
             }
@@ -435,7 +795,24 @@ static uint8_t first_computer_move_for_distance(uint8_t distance)
     return FLAG_OFF;
 }
 
-static uint8_t best_computer_move(CandidateMove* best)
+static uint8_t first_computer_move_for_distance(CandidateMove* candidate, uint8_t distance)
+{
+    for (uint8_t y = 0; y < CHECKERS_BOARD_SQUARES; y++) {
+        for (uint8_t x = 0; x < CHECKERS_BOARD_SQUARES; x++) {
+            uint8_t piece = board[y][x];
+
+            if (piece_matches_turn(piece, TURN_COMPUTER)) {
+                if (first_piece_move_for_distance(candidate, x, y, distance)) {
+                    return FLAG_ON;
+                }
+            }
+        }
+    }
+
+    return FLAG_OFF;
+}
+
+static uint8_t best_computer_move(CandidateMove* best, uint8_t required_move_type)
 {
     best->move_type = MOVE_NONE;
     best->score = SCORE_NONE;
@@ -455,7 +832,8 @@ static uint8_t best_computer_move(CandidateMove* best)
 
                                 if (coord_on_board(to_x)) {
                                     uint8_t move_type = move_type_for_piece(x, y, (uint8_t)to_x, (uint8_t)to_y, piece);
-                                    if (move_type != MOVE_NONE) {
+                                    if (move_type != MOVE_NONE &&
+                                        (required_move_type == MOVE_NONE || move_type == required_move_type)) {
                                         remember_candidate(best, x, y, (uint8_t)to_x, (uint8_t)to_y, piece, move_type);
                                     }
                                 }
@@ -470,40 +848,137 @@ static uint8_t best_computer_move(CandidateMove* best)
     return (best->move_type != MOVE_NONE) ? FLAG_ON : FLAG_OFF;
 }
 
+static uint8_t best_piece_capture(CandidateMove* best, uint8_t from_x, uint8_t from_y)
+{
+    uint8_t piece = board[from_y][from_x];
+
+    best->move_type = MOVE_NONE;
+    best->score = SCORE_NONE;
+
+    for (int8_t dy = -1; dy <= 1; dy += 2) {
+        int8_t to_y = (int8_t)(from_y + (dy * MOVE_DISTANCE_CAPTURE));
+
+        if (coord_on_board(to_y)) {
+            for (int8_t dx = -1; dx <= 1; dx += 2) {
+                int8_t to_x = (int8_t)(from_x + (dx * MOVE_DISTANCE_CAPTURE));
+
+                if (coord_on_board(to_x)) {
+                    uint8_t move_type = move_type_for_piece(
+                        from_x,
+                        from_y,
+                        (uint8_t)to_x,
+                        (uint8_t)to_y,
+                        piece);
+
+                    if (move_type == MOVE_CAPTURE) {
+                        remember_candidate(best, from_x, from_y, (uint8_t)to_x, (uint8_t)to_y, piece, move_type);
+                    }
+                }
+            }
+        }
+    }
+
+    return (best->move_type != MOVE_NONE) ? FLAG_ON : FLAG_OFF;
+}
+
+static uint8_t first_or_best_piece_capture(CandidateMove* candidate, uint8_t from_x, uint8_t from_y)
+{
+    if (ai_difficulty == CHECKERS_AI_HARD) {
+        return best_piece_capture(candidate, from_x, from_y);
+    }
+
+    return first_piece_move_for_distance(candidate, from_x, from_y, MOVE_DISTANCE_CAPTURE);
+}
+
+static void finish_computer_turn(void)
+{
+    current_turn = TURN_PLAYER;
+    if (!update_game_over()) {
+        clear_banner_message();
+    }
+}
+
+static void apply_computer_move_chain(const CandidateMove* first_move)
+{
+    CandidateMove move;
+
+    store_candidate(
+        &move,
+        first_move->from_x,
+        first_move->from_y,
+        first_move->to_x,
+        first_move->to_y,
+        first_move->piece,
+        first_move->move_type);
+
+    while (1) {
+        uint8_t promotes = piece_promotes_at(move.piece, move.to_y);
+
+        apply_candidate_move(&move);
+
+        if (promotes || !piece_has_capture(move.to_x, move.to_y)) {
+            break;
+        }
+
+        wait_frames(CHECKERS_COMPUTER_REPLY_DELAY_FRAMES);
+        if (!first_or_best_piece_capture(&move, move.to_x, move.to_y)) {
+            break;
+        }
+    }
+
+    finish_computer_turn();
+}
+
 static void run_computer_turn(void)
 {
+    CandidateMove move;
+
     current_turn = TURN_COMPUTER;
+    clear_banner_message();
+    wait_frames(CHECKERS_COMPUTER_REPLY_DELAY_FRAMES);
 
-#if CHECKERS_AI_DIFFICULTY == CHECKERS_AI_EASY
-    if (first_computer_move_for_distance(MOVE_DISTANCE_ONE) ||
-        first_computer_move_for_distance(MOVE_DISTANCE_CAPTURE)) {
-        current_turn = TURN_PLAYER;
-        return;
-    }
-#elif CHECKERS_AI_DIFFICULTY == CHECKERS_AI_HARD
-    {
-        CandidateMove best;
+    if (side_has_capture(TURN_COMPUTER)) {
+        if (ai_difficulty == CHECKERS_AI_HARD && best_computer_move(&move, MOVE_CAPTURE)) {
+            apply_computer_move_chain(&move);
+            return;
+        }
 
-        if (best_computer_move(&best)) {
-            apply_move(best.from_x, best.from_y, best.to_x, best.to_y, best.piece, best.move_type);
-            current_turn = TURN_PLAYER;
+        if (first_computer_move_for_distance(&move, MOVE_DISTANCE_CAPTURE)) {
+            apply_computer_move_chain(&move);
             return;
         }
     }
-#else
-    if (first_computer_move_for_distance(MOVE_DISTANCE_CAPTURE) ||
-        first_computer_move_for_distance(MOVE_DISTANCE_ONE)) {
-        current_turn = TURN_PLAYER;
+
+    if (ai_difficulty == CHECKERS_AI_EASY &&
+        (first_computer_move_for_distance(&move, MOVE_DISTANCE_ONE) ||
+            first_computer_move_for_distance(&move, MOVE_DISTANCE_CAPTURE))) {
+        apply_candidate_move(&move);
+        finish_computer_turn();
         return;
     }
-#endif
+
+    if (ai_difficulty == CHECKERS_AI_HARD && best_computer_move(&move, MOVE_NONE)) {
+        apply_candidate_move(&move);
+        finish_computer_turn();
+        return;
+    }
+
+    if (first_computer_move_for_distance(&move, MOVE_DISTANCE_CAPTURE) ||
+        first_computer_move_for_distance(&move, MOVE_DISTANCE_ONE)) {
+        apply_candidate_move(&move);
+        finish_computer_turn();
+        return;
+    }
 
     current_turn = TURN_PLAYER;
+    set_game_state(GAME_PLAYER_WIN);
 }
 
 static void try_select_or_move(void)
 {
     uint8_t move_type;
+    uint8_t landing_x;
+    uint8_t landing_y;
 
     if (current_turn != TURN_PLAYER) {
         return;
@@ -517,16 +992,49 @@ static void try_select_or_move(void)
     }
 
     if (selector_x == selected_x && selector_y == selected_y) {
+        if (piece_has_capture(selected_x, selected_y)) {
+            draw_banner_message("KEEP CAPTURING!");
+            return;
+        }
+
         clear_selection_and_update_selector();
         return;
     }
 
     move_type = move_type_for_piece(selected_x, selected_y, selector_x, selector_y, board[selected_y][selected_x]);
     if (move_type != MOVE_NONE) {
+        uint8_t promotes;
+
+        landing_x = selector_x;
+        landing_y = selector_y;
+        promotes = piece_promotes_at(board[selected_y][selected_x], landing_y);
+
+        if (move_type == MOVE_SIMPLE && side_has_capture(TURN_PLAYER)) {
+            draw_banner_message("CAPTURE REQUIRED!");
+            return;
+        }
+
+        render_clear_drag_piece();
         apply_move(selected_x, selected_y, selector_x, selector_y, board[selected_y][selected_x], move_type);
+        if (update_game_over()) {
+            return;
+        }
+
+        if (move_type == MOVE_CAPTURE && !promotes && piece_has_capture(landing_x, landing_y)) {
+            selected_x = landing_x;
+            selected_y = landing_y;
+            selector_x = landing_x;
+            selector_y = landing_y;
+            sync_cursor_to_selector();
+            show_selected_piece_as_drag();
+            draw_banner_message("KEEP CAPTURING!");
+            return;
+        }
+
         clear_selection_and_update_selector();
-        wait_frames(CHECKERS_COMPUTER_REPLY_DELAY_FRAMES);
         run_computer_turn();
+    } else if (piece_has_capture(selected_x, selected_y)) {
+        draw_banner_message("KEEP CAPTURING!");
     } else if (selector_has_player_piece()) {
         select_current_piece();
     }
@@ -553,7 +1061,10 @@ void checkers_init_game(void)
 {
     next_piece_index = 0;
     clear_selection();
+    render_clear_drag_piece();
+    render_clear_sprite_layer();
     current_turn = TURN_PLAYER;
+    game_state = GAME_PLAYING;
 
     for (uint8_t y = 0; y < CHECKERS_BOARD_SQUARES; y++) {
         for (uint8_t x = 0; x < CHECKERS_BOARD_SQUARES; x++) {
@@ -584,11 +1095,26 @@ void checkers_init_game(void)
 
     selector_x = SELECTOR_START_X;
     selector_y = SELECTOR_START_Y;
+    clear_banner_message();
     sync_cursor_to_selector();
+}
+
+void checkers_set_ai_difficulty(uint8_t difficulty)
+{
+    if (difficulty <= CHECKERS_AI_HARD) {
+        ai_difficulty = difficulty;
+    }
 }
 
 void checkers_handle_input(const KeyEvents* ev)
 {
+    if (game_state != GAME_PLAYING) {
+        if (ev->start) {
+            checkers_init_game();
+        }
+        return;
+    }
+
     apply_mouse_motion(ev);
 
     if (ev->left) {
@@ -602,6 +1128,11 @@ void checkers_handle_input(const KeyEvents* ev)
     } else if (ev->accept) {
         try_select_or_move();
     } else if (ev->cancel) {
+        if (has_selection() && piece_has_capture(selected_x, selected_y)) {
+            draw_banner_message("KEEP CAPTURING!");
+            return;
+        }
+
         clear_selection_and_update_selector();
     }
 }
