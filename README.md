@@ -19,10 +19,11 @@ Based on the Standard American/English checkers rules.
 ## Controls
 
 - SNES mouse supported
-- `UP` `DOWN` `LEFT` `RIGHT` (or SNES D-pad): move hand selector around
-- `SPACE` (or SNES `B` or or mouse left click): reveal selected card
-- `X` (or SNES `A` or or mouse right click): undo previous card selection
+- `UP` `DOWN` `RIGHT` (or SNES D-pad): to select game difficulty
+- `SPACE` (or SNES `B` or or mouse left click): select peace
+- `X` (or SNES `A` or or mouse right click): undo previous piece selection
 - `RIGHT_SHIFT` (or SNES `SELECT`): quit
+- `ENTER` or SNES `START`: restart the game
 
 If using the native-emulator and not real hardware, click on the mouse middle button to hide the host mouse cursor.
 
@@ -30,9 +31,6 @@ If using the native-emulator and not real hardware, click on the mouse middle bu
 
 ## Attribution
 
-Author: Brianna Cason 
+Author: Brianna Cason
 License: CC-BY 4.0  
 https://hanahoa.itch.io/chess-and-checkers
-
-
-
