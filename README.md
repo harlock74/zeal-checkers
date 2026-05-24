@@ -27,12 +27,13 @@ Based on the Standard American/English checkers rules.
 
 If using the native-emulator and not real hardware, click on the mouse middle button to hide the host mouse cursor.
 
-
-
-## Attribution
-
 ## Attribution
 
 - Author: Brianna Cason
 - License: CC-BY 4.0
 - Source: https://hanahoa.itch.io/chess-and-checkers
+
+- Author: Zingot Games  
+- License: CC-BY 4.0  
+- Source: https://opengameart.org/content/bitmap-font-pack  
+- A few changes to the original assets have been made including the color palette.
