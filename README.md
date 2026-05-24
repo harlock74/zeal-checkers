@@ -31,6 +31,8 @@ If using the native-emulator and not real hardware, click on the mouse middle bu
 
 ## Attribution
 
-Author: Brianna Cason
-License: CC-BY 4.0  
-https://hanahoa.itch.io/chess-and-checkers
+## Attribution
+
+- Author: Brianna Cason
+- License: CC-BY 4.0
+- Source: https://hanahoa.itch.io/chess-and-checkers
