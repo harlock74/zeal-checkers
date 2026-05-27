@@ -28,6 +28,7 @@ add_executable(${target_name}
     src/assets.c
     src/render.c
     src/checkers.c
+    src/checkers_ai.c
     src/audio.c
     src/splash.c
 )
