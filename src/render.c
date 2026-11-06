@@ -102,7 +102,7 @@ void render_draw_banner_text(const char* text)
 
     if (len > FLAG_OFF) {
         x = (uint8_t)((SCREEN_TILE_W - len) / 2U);
-        nprint_string(&vctx, text, len, x, CHECKERS_BANNER_TEXT_Y);
+        hud_tilemap_nput_s(&vctx, text, len, x, CHECKERS_BANNER_TEXT_Y);
     }
 }
 
